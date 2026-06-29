@@ -5,7 +5,7 @@
 
 import React, { useState, useEffect } from "react";
 import { TrademarkRecord, SyncConflict } from "./types";
-import { DEFAULT_SEED_TRADEMARKS } from "./data";
+import { supabase } from "./supabaseClient";
 import { AnimatePresence, motion } from "motion/react";
 import InteractiveStudio from "./components/InteractiveStudio";
 import TrademarkCertificate from "./components/TrademarkCertificate";
@@ -53,7 +53,7 @@ export default function App() {
       const verifyId = params.get("verifyId");
       if (verifyId) {
         setPrefilledVerifyId(verifyId);
-        setActiveTab("verifier");
+          setActiveTab("verifier");
       }
     }
 
@@ -73,12 +73,8 @@ export default function App() {
       }
     }
 
-    if (!localData || localData.length === 0) {
-      localData = DEFAULT_SEED_TRADEMARKS;
-    }
     setRecords(localData);
-
-    fetchServerRecords(localData);
+    fetchServerRecords();
   }, []);
 
   const saveToLocalStorage = (data: TrademarkRecord[]) => {
@@ -89,63 +85,37 @@ export default function App() {
     }
   };
 
-  const fetchServerRecords = async (localList: TrademarkRecord[]) => {
+  // FETCH RECORDS FROM SUPABASE
+  const fetchServerRecords = async () => {
     try {
-      const res = await fetch("/api/trademarks");
-      if (res.ok) {
-        const textStr = await res.text();
-        let serverList: TrademarkRecord[] = [];
-        try {
-          serverList = JSON.parse(textStr) as TrademarkRecord[];
-        } catch (jsonErr) {
-          console.warn("Server response was not valid JSON:", textStr);
-          throw new Error("Invalid response format");
-        }
-        setHasServerConnection(true);
-        const merged = mergeRegistries(localList, serverList);
-        setRecords(merged);
-        saveToLocalStorage(merged);
+      const { data, error } = await supabase
+        .from('trademarks')
+        .select('*')
+        .order('updatedAt', { ascending: false });
 
-        if (merged.length > 0 && !selectedRecord) {
-          setSelectedRecord(merged[0]);
+      if (error) throw error;
+
+      if (data) {
+        const formattedData: TrademarkRecord[] = data.map((item: any) => ({
+          ...item,
+          syncStatus: "synced" as const
+        }));
+
+        setRecords(formattedData);
+        saveToLocalStorage(formattedData);
+        setHasServerConnection(true);
+
+        if (formattedData.length > 0 && !selectedRecord) {
+          setSelectedRecord(formattedData[0]);
         }
-      } else {
-        setHasServerConnection(false);
       }
     } catch (err) {
-      console.warn("Operating with cached local registry data:", err);
+      console.error("Supabase fetch failed, operating with cache:", err);
       setHasServerConnection(false);
-      if (localList.length > 0 && !selectedRecord) {
-        setSelectedRecord(localList[0]);
-      }
     }
   };
 
-  const mergeRegistries = (local: TrademarkRecord[], server: TrademarkRecord[]): TrademarkRecord[] => {
-    const serverMap = new Map<string, TrademarkRecord>(server.map(r => [r.id, r]));
-    const mergedMap = new Map<string, TrademarkRecord>(server.map(r => [r.id, { ...r, syncStatus: "synced" as const }]));
-
-    for (const localRec of local) {
-      const serverRec = serverMap.get(localRec.id);
-      if (!serverRec) {
-        if (localRec.syncStatus === "synced") {
-          mergedMap.set(localRec.id, { ...localRec, syncStatus: "local-only" });
-        } else {
-          mergedMap.set(localRec.id, localRec);
-        }
-      } else {
-        if (localRec.updatedAt > serverRec.updatedAt) {
-          mergedMap.set(localRec.id, { ...localRec, syncStatus: "local-only" });
-        } else if (localRec.updatedAt < serverRec.updatedAt) {
-          mergedMap.set(localRec.id, { ...serverRec, syncStatus: "synced" });
-        } else {
-          mergedMap.set(localRec.id, { ...serverRec, syncStatus: "synced" });
-        }
-      }
-    }
-    return Array.from(mergedMap.values());
-  };
-
+  // TRIGGER SYNC / MANUAL REFRESH WITH SUPABASE
   const handleTriggerSync = async () => {
     if (isOfflineMode) {
       showToast("Please toggle off the Offline Mode to synchronize records with the server.", "warning");
@@ -153,51 +123,24 @@ export default function App() {
     }
 
     setIsSyncing(true);
-    setConflicts([]);
     try {
-      const res = await fetch("/api/trademarks/sync", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ records })
-      });
-
-      if (res.ok) {
-        const responseData = await res.json() as { mergedRecords: TrademarkRecord[]; conflictRecords: SyncConflict[] };
-        let finalRecords = responseData.mergedRecords;
-        const conflictingIds = new Set(responseData.conflictRecords.map(c => c.id));
-        finalRecords = finalRecords.map(r => {
-          if (conflictingIds.has(r.id)) {
-            return { ...r, syncStatus: "conflict" as const };
-          }
-          return { ...r, syncStatus: "synced" as const };
-        });
-
-        setRecords(finalRecords);
-        saveToLocalStorage(finalRecords);
-        setConflicts(responseData.conflictRecords);
-        setHasServerConnection(true);
-
-        if (responseData.conflictRecords.length > 0) {
-          setActiveTab("sync");
-          showToast(`Sync complete. Detected ${responseData.conflictRecords.length} conflict overlaps requiring manual review.`, "warning");
-        } else {
-          showToast("Synchronization successful. All registry changes recorded on secure governmental server.", "success");
-        }
-      } else {
-        throw new Error("Server sync responded with error");
-      }
-    } catch (err: any) {
-      console.error("Reconciliation failed:", err);
+      await fetchServerRecords();
+      showToast("Synchronization successful. All registry changes pulled from Supabase secure ledger.", "success");
+    } catch (err) {
       setHasServerConnection(false);
-      showToast("Database Synchronization failed: Governmental ledger unreachable.", "error");
+      showToast("Database Synchronization failed: Supabase server unreachable.", "error");
     } finally {
       setIsSyncing(false);
     }
   };
 
+  // SAVE OR UPDATE RECORD IN SUPABASE
   const handleSaveRecord = async (record: TrademarkRecord) => {
     const updatedRecords = [...records];
     const index = updatedRecords.findIndex((r) => r.id === record.id);
+    
+    // Clean status for DB insert
+    const { syncStatus, ...dbRecord } = record;
     
     if (index >= 0) {
       updatedRecords[index] = record;
@@ -211,28 +154,29 @@ export default function App() {
 
     if (!isOfflineMode) {
       try {
-        const res = await fetch("/api/trademarks", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(record)
-        });
+        const { error } = await supabase
+          .from('trademarks')
+          .upsert({
+            ...dbRecord,
+            updatedAt: Date.now()
+          });
 
-        if (res.ok) {
-          const syncedRecord: TrademarkRecord = {
-            ...record,
-            syncStatus: "synced" as const
-          };
-          const freshList = updatedRecords.map(r => r.id === record.id ? syncedRecord : r);
-          setRecords(freshList);
-          saveToLocalStorage(freshList);
-          setSelectedRecord(syncedRecord);
-          setHasServerConnection(true);
-        } else {
-          setHasServerConnection(false);
-        }
+        if (error) throw error;
+
+        const syncedRecord: TrademarkRecord = {
+          ...record,
+          syncStatus: "synced" as const
+        };
+        const freshList = updatedRecords.map(r => r.id === record.id ? syncedRecord : r);
+        setRecords(freshList);
+        saveToLocalStorage(freshList);
+        setSelectedRecord(syncedRecord);
+        setHasServerConnection(true);
+        showToast("Record successfully updated in Supabase cloud ledger.", "success");
       } catch (err) {
-        console.warn("Failed to push update to server. Storing locally:", err);
+        console.warn("Failed to push update to Supabase. Storing locally:", err);
         setHasServerConnection(false);
+        showToast("Server upload failed. Saved locally as draft.", "warning");
       }
     }
   };
@@ -251,13 +195,10 @@ export default function App() {
     setConflicts(prev => prev.filter(c => c.id !== winner.id));
 
     try {
-      await fetch("/api/trademarks", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(resolvedRecord)
-      });
+      const { syncStatus, ...dbRecord } = resolvedRecord;
+      await supabase.from('trademarks').upsert(dbRecord);
     } catch (e) {
-      console.warn("Failed to send resolution choice to server:", e);
+      console.warn("Failed to send resolution choice to Supabase:", e);
     }
   };
 
