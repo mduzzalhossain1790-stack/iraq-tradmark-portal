@@ -6,7 +6,7 @@
 
 This contains everything you need to run your app locally.
 
-View your app in AI Studio: [https://ai.studio/apps/c5465eda-e441-4aaf-9493-da3d9dc18ddc](https://iraqgovtradamrk.org/)
+View your app in AI Studio: [https://ai.studio/apps/c5465eda-e441-4aaf-9493-da3d9dc18ddc]
 
 ## Run Locally
 
