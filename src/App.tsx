@@ -5,6 +5,7 @@
 
 import React, { useState, useEffect } from "react";
 import { TrademarkRecord, SyncConflict } from "./types";
+import { DEFAULT_SEED_TRADEMARKS } from "./data";
 import { AnimatePresence, motion } from "motion/react";
 import InteractiveStudio from "./components/InteractiveStudio";
 import TrademarkCertificate from "./components/TrademarkCertificate";
@@ -67,11 +68,15 @@ export default function App() {
     if (cached) {
       try {
         localData = JSON.parse(cached);
-        setRecords(localData);
       } catch (e) {
         console.error("Failed to parse cached local databases:", e);
       }
     }
+
+    if (!localData || localData.length === 0) {
+      localData = DEFAULT_SEED_TRADEMARKS;
+    }
+    setRecords(localData);
 
     fetchServerRecords(localData);
   }, []);
@@ -443,6 +448,7 @@ export default function App() {
                   setSelectedRecord(rec);
                 }}
                 onNavigateToTab={setActiveTab}
+                isOfficer={isOfficer}
               />
             )}
 

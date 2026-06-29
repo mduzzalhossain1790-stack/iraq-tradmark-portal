@@ -18,6 +18,7 @@ interface VerifierPortalProps {
   initialSearchId?: string;
   onSelectRecord?: (record: TrademarkRecord) => void;
   onNavigateToTab?: (tabName: "studio" | "verifier" | "certificate" | "sync") => void;
+  isOfficer?: boolean;
 }
 
 // Nice Class mapping with international official descriptions (All 45 Classes)
@@ -85,7 +86,8 @@ export default function VerifierPortal({
   records, 
   initialSearchId = "", 
   onSelectRecord,
-  onNavigateToTab 
+  onNavigateToTab,
+  isOfficer = false
 }: VerifierPortalProps) {
   // Search states
   const [searchMode, setSearchMode] = useState<'basic' | 'structured' | 'categories'>('basic');
@@ -925,7 +927,7 @@ export default function VerifierPortal({
                 <span>{copied ? "Link Copied!" : "Share Link"}</span>
               </button>
 
-              {onSelectRecord && (
+              {isOfficer && onSelectRecord && (
                 <button
                   onClick={() => onSelectRecord(selectedResult)}
                   className="px-3.5 py-2 bg-amber-500 hover:bg-amber-600 text-slate-950 rounded-none font-bold text-[11px] shadow-sm transition cursor-pointer"
